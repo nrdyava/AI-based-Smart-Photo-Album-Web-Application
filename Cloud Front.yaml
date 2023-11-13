@@ -240,9 +240,6 @@ Resources:
     Properties:
       Name: MyAPI
       FailOnWarnings: true
-      EndpointConfiguration:
-        Types:
-          - Regional
       BodyS3Location:
         Bucket: assgn2-files-v1
         Key: CCBDA2-Api2Stage1-swagger-apigateway.json
