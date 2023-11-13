@@ -1,0 +1,22 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.8
+  build:
+    commands:
+      - echo "Zipping deployment package..."
+      - cd LF2
+      - zip -r9 ../LF2deployment_package.zip .
+      - cd ..
+      - zip -g LF2deployment_package.zip LF2/lambda_function.py
+      - cd index-photos
+      - zip -r9 ../IndexPhotosdeployment_package.zip .
+      - cd ..
+      - zip -g IndexPhotosdeployment_package.zip index-photos/lambda_function.py
+  post_build:
+    commands:
+      - echo "Updating lambda Function..."
+      - aws lambda update-function-code --function-name LF2 --zip-file fileb://LF2deployment_package.zip
+      - aws lambda update-function-code --function-name index-photos --zip-file fileb://IndexPhotosdeployment_package.zip
+      - echo "DONE!!"
