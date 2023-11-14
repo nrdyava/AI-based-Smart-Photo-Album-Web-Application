@@ -1,0 +1,533 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  B1Name:
+    Type: String
+    Default: B1-Bucket
+  B2Name:
+    Type: String
+    Default: B2-bucket
+  APIusagePlanName:
+    Type: String
+    Default: usageplan
+  BotID:
+    Type: String
+    Default: OPJAKKFGGH
+  BotAliasID:
+    Type: String
+    Default: T0YX20IC3A
+
+
+Resources:
+  photos:
+    Type : "AWS::OpenSearchService::Domain"
+    Properties:
+      DomainName: photosv5
+      EngineVersion: 'OpenSearch_2.9'
+      NodeToNodeEncryptionOptions:
+        Enabled: true
+      AccessPolicies: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "*"
+              },
+              "Action": "es:*",
+              "Resource": "arn:aws:es:us-east-1:569179456476:domain/photosv5/*"
+              }
+              ]
+              }
+      ClusterConfig:
+        DedicatedMasterEnabled: false
+        InstanceCount: '1'
+        InstanceType: t3.small.search
+        ZoneAwarenessEnabled: false
+        MultiAZWithStandbyEnabled: false
+      EBSOptions:
+        EBSEnabled: true
+        Iops: '3000'
+        VolumeSize: '10'
+        VolumeType: gp3
+      EncryptionAtRestOptions:
+        Enabled: true
+      AdvancedSecurityOptions:
+        Enabled: true
+        InternalUserDatabaseEnabled: true
+        MasterUserOptions:
+          MasterUserName: master
+          MasterUserPassword: 'Columbia@123'
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+
+  LambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: LambdaRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: AWSLambdaBasicExecutionRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+        - PolicyName: AmazonS3FullAccessv22
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 's3:*'
+                Resource: '*'
+        - PolicyName: AmazonLexFullAccessv22
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 'lex:*'
+                Resource: '*'
+        - PolicyName: AmazonRekognitionFullAccessv22
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 'rekognition:*'
+                Resource: '*'
+        - PolicyName: AmazonOpenSearchServiceFullAccessv22
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 'es:*'
+                Resource: '*'
+
+
+  LF1:
+    Type: AWS::Lambda::Function
+    DependsOn: photos
+    Properties:
+      Code:
+        S3Bucket: assgn2-files-v1
+        S3Key: index-photos.zip
+      FunctionName: LF1_V1
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.9
+      MemorySize: 128
+      Timeout: 60
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          REGION: us-east-1
+          OSDOMAINEP: !GetAtt photos.DomainEndpoint
+
+  LF2:
+    Type: AWS::Lambda::Function
+    DependsOn: photos
+    Properties:
+      Code:
+        S3Bucket: assgn2-files-v1
+        S3Key: LF2.zip
+      FunctionName: LF2_V1
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.9
+      MemorySize: 128
+      Timeout: 60
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          REGION: us-east-1
+          BOTID: !Ref BotID
+          BOTALIASID: !Ref BotAliasID
+          OSDOMAINEP: !GetAtt photos.DomainEndpoint
+
+  B1:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Ref B1Name
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  B1BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    DependsOn: B1
+    Properties:
+      Bucket: !Ref B1
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref B1
+                - /*
+
+  B2:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    DependsOn: MyUsagePlanKey
+    Properties:
+      BucketName: !Ref B2Name
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
+#      NotificationConfiguration:
+#        LambdaConfigurations:
+#        - Event: "s3:ObjectCreated:*"
+#          Function: !GetAtt LF1.Arn
+
+
+
+  S3LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: 
+      - LF1
+      - B2
+    Properties:
+      FunctionName: !Ref LF1
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:aws:s3:::${B2Name}
+
+  
+
+  MyAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyAPIV2
+      FailOnWarnings: true
+      Body: {
+  "swagger" : "2.0",
+  "info" : {
+    "version" : "2023-11-05T23:39:22Z",
+    "title" : "CCBDA2"
+  },
+  "schemes" : [ "https" ],
+  "paths" : {
+    "/search" : {
+      "get" : {
+        "consumes" : [ "application/json" ],
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "name" : "q",
+          "in" : "query",
+          "required" : false,
+          "type" : "string"
+        }, {
+          "in" : "body",
+          "name" : "Empty",
+          "required" : true,
+          "schema" : {
+            "$ref" : "#/definitions/Empty"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/Empty"
+            },
+            "headers" : {
+              "Access-Control-Allow-Origin" : {
+                "type" : "string"
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration" : {
+          "httpMethod" : "POST",
+          "uri" : "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:569179456476:function:LD/invocations",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200",
+              "responseParameters" : {
+                "method.response.header.Access-Control-Allow-Origin" : "'*'"
+              }
+            }
+          },
+          "requestParameters" : {
+            "integration.request.querystring.q" : "method.request.querystring.q"
+          },
+          "passthroughBehavior" : "when_no_match",
+          "contentHandling" : "CONVERT_TO_TEXT",
+          "type" : "aws_proxy"
+        }
+      },
+      "options" : {
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "name" : "q",
+          "in" : "query",
+          "required" : false,
+          "type" : "string"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/Empty"
+            },
+            "headers" : {
+              "Access-Control-Allow-Origin" : {
+                "type" : "string"
+              },
+              "Access-Control-Allow-Methods" : {
+                "type" : "string"
+              },
+              "Access-Control-Allow-Headers" : {
+                "type" : "string"
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration" : {
+          "httpMethod" : "POST",
+          "uri" : "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:569179456476:function:LD/invocations",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200",
+              "responseParameters" : {
+                "method.response.header.Access-Control-Allow-Methods" : "'OPTIONS,GET'",
+                "method.response.header.Access-Control-Allow-Headers" : "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-Meta-CustomLabels'",
+                "method.response.header.Access-Control-Allow-Origin" : "'*'"
+              }
+            }
+          },
+          "requestParameters" : {
+            "integration.request.querystring.q" : "method.request.querystring.q"
+          },
+          "passthroughBehavior" : "when_no_match",
+          "contentHandling" : "CONVERT_TO_TEXT",
+          "type" : "aws"
+        }
+      }
+    },
+    "/upload/{bucket}/{filename}" : {
+      "put" : {
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "name" : "filename",
+          "in" : "path",
+          "required" : true,
+          "type" : "string"
+        }, {
+          "name" : "bucket",
+          "in" : "path",
+          "required" : true,
+          "type" : "string"
+        }, {
+          "name" : "x-amz-meta-customLabels",
+          "in" : "header",
+          "required" : false,
+          "type" : "string"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/Empty"
+            },
+            "headers" : {
+              "Access-Control-Allow-Origin" : {
+                "type" : "string"
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "api_key" : [ ]
+        } ],
+        "x-amazon-apigateway-integration" : {
+          "credentials" : "arn:aws:iam::569179456476:role/UploadImageAPI",
+          "httpMethod" : "PUT",
+          "uri" : "arn:aws:apigateway:us-east-1:s3:path/{bucket}/{key}",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200",
+              "responseParameters" : {
+                "method.response.header.Access-Control-Allow-Origin" : "'*'"
+              }
+            }
+          },
+          "requestParameters" : {
+            "integration.request.header.x-amz-meta-customLabels" : "method.request.header.x-amz-meta-customLabels",
+            "integration.request.path.key" : "method.request.path.filename",
+            "integration.request.path.bucket" : "method.request.path.bucket"
+          },
+          "passthroughBehavior" : "when_no_match",
+          "type" : "aws"
+        }
+      },
+      "options" : {
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "name" : "filename",
+          "in" : "path",
+          "required" : true,
+          "type" : "string"
+        }, {
+          "name" : "bucket",
+          "in" : "path",
+          "required" : true,
+          "type" : "string"
+        }, {
+          "name" : "x-amz-meta-customLabels",
+          "in" : "header",
+          "required" : false,
+          "type" : "string"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/Empty"
+            },
+            "headers" : {
+              "Access-Control-Allow-Origin" : {
+                "type" : "string"
+              },
+              "Access-Control-Allow-Methods" : {
+                "type" : "string"
+              },
+              "Access-Control-Allow-Headers" : {
+                "type" : "string"
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration" : {
+          "credentials" : "arn:aws:iam::569179456476:role/UploadImageAPI",
+          "httpMethod" : "OPTIONS",
+          "uri" : "arn:aws:apigateway:us-east-1:s3:path/{bucket}/{filename}",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200",
+              "responseParameters" : {
+                "method.response.header.Access-Control-Allow-Methods" : "'OPTIONS,PUT'",
+                "method.response.header.Access-Control-Allow-Headers" : "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-Meta-CustomLabels'",
+                "method.response.header.Access-Control-Allow-Origin" : "'*'"
+              }
+            }
+          },
+          "requestParameters" : {
+            "integration.request.path.filename" : "method.request.path.filename",
+            "integration.request.header.x-amz-meta-customLabels" : "method.request.header.x-amz-meta-customLabels",
+            "integration.request.path.bucket" : "method.request.path.bucket"
+          },
+          "passthroughBehavior" : "when_no_match",
+          "type" : "aws"
+        }
+      }
+    }
+  },
+  "securityDefinitions" : {
+    "api_key" : {
+      "type" : "apiKey",
+      "name" : "x-api-key",
+      "in" : "header"
+    }
+  },
+  "definitions" : {
+    "Empty" : {
+      "type" : "object",
+      "title" : "Empty Schema"
+    }
+  },
+  "x-amazon-apigateway-gateway-responses" : {
+    "DEFAULT_4XX" : {
+      "responseParameters" : {
+        "gatewayresponse.header.Access-Control-Allow-Methods" : "'GET,OPTIONS'",
+        "gatewayresponse.header.Access-Control-Allow-Origin" : "'*'",
+        "gatewayresponse.header.Access-Control-Allow-Headers" : "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      }
+    },
+    "DEFAULT_5XX" : {
+      "responseParameters" : {
+        "gatewayresponse.header.Access-Control-Allow-Methods" : "'GET,OPTIONS'",
+        "gatewayresponse.header.Access-Control-Allow-Origin" : "'*'",
+        "gatewayresponse.header.Access-Control-Allow-Headers" : "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      }
+    }
+  },
+  "x-amazon-apigateway-binary-media-types" : [ "*/*" ]
+}
+
+  MyApiDeployment:
+    Type: "AWS::ApiGateway::Deployment"
+    DependsOn: MyAPI
+    Properties:
+      RestApiId: !Ref MyAPI
+
+  MyApiStage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn: MyApiDeployment
+    Properties:
+      RestApiId: !Ref MyAPI
+      DeploymentId: !Ref MyApiDeployment
+      StageName: "test_stage_v2"
+
+  usagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: MyApiStage
+    Properties:
+      ApiStages:
+        - ApiId: !Ref MyAPI
+          Stage: !Ref MyApiStage
+      Quota:
+        Limit: 10000
+        Period: MONTH
+      Throttle:
+        BurstLimit: 1000
+        RateLimit: 100
+      UsagePlanName: !Ref APIusagePlanName
+
+  MyUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    DependsOn: 
+      - usagePlan
+      - LF1
+    Properties:
+      KeyId: 'l4afmv9cw4'
+      KeyType: "API_KEY"
+      UsagePlanId: !Ref usagePlan
+  
+
+
+Outputs:
+  outputWebsiteURL:
+    Value: !GetAtt
+      - B1
+      - WebsiteURL
+    Description: Static website URL for B1
+  
+  OSDomainEndPoint:
+    Value: !GetAtt photos.DomainEndpoint
+    Description: Open Search Domain End Point
